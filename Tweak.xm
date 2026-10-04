@@ -34,7 +34,7 @@
 #include <stdlib.h>      /* malloc / calloc */
 #include <sys/stat.h>    /* 配置热重载：stat() 取文件修改时间 */
 
-#define TWEAK_VERSION "0.2.0"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
+#define TWEAK_VERSION "0.2.1"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
 #define BUNDLE_SNIPER3D "com.fungames.sniper3d"
 
 /* ★ 默认参数（会被配置覆盖）—— 必须定义在文件头，ConfigDefaults() 要用 */
@@ -46,6 +46,9 @@
 #define DEF_SPAWN_LIMIT    20       /* 同屏上限（可自设） */
 #define DEF_SPAWN_TOTAL    0        /* 0 = 不限（内部用 500） */
 #define DEF_TIME_LIMIT     20       /* 对局时长压缩到 20 秒 */
+/* ★ v0.2.1：目标数门槛（同全球行动那份）。旧代码写死 targetsN<=3 不杀 —— 防大厅由
+ *   hallMode 那道闸负责，门槛只会让残局停手、必须手动补枪。默认 1 = 有目标就杀。 */
+#define DEF_MIN_TARGETS    1
 
 /* 刷怪器：三个类的布局**不完全一样**（dump.cs 实证），认不出就绝不写 */
 #define SP_TOTAL_MIN  0x28
@@ -130,6 +133,7 @@ typedef struct {
     int    spawnTotal;     /* 总数，0=不限 */
     int    timeLimit;      /* y 时长压缩秒数，0=不干预 */
     BOOL   infiniteAmmo;   /* 无限子弹 */
+    int    minTargets;     /* ★ v0.2.1：场上至少几个目标才开杀（默认 1 = 残局自动收尾；改 4 = 旧的"≤3 不杀"行为） */
 } ZBConfig;
 static ZBConfig cfg;
 
@@ -143,6 +147,7 @@ static void ConfigDefaults(ZBConfig *c) {
     c->spawn = YES; c->spawnRate = DEF_SPAWN_RATE; c->spawnLimit = DEF_SPAWN_LIMIT; c->spawnTotal = DEF_SPAWN_TOTAL;
     c->timeLimit = DEF_TIME_LIMIT;
     c->infiniteAmmo = YES;
+    c->minTargets = DEF_MIN_TARGETS;   /* ★ v0.2.1 */
 }
 static int cfgInt(NSDictionary *d, NSString *k, int def) {
     id v = d[k];
@@ -168,6 +173,8 @@ static void ConfigFromDict(ZBConfig *c, NSDictionary *d) {
     c->spawnTotal   = cfgInt(d, @"spawn_total", DEF_SPAWN_TOTAL);
     c->timeLimit    = cfgInt(d, @"time_limit", DEF_TIME_LIMIT);
     c->infiniteAmmo = cfgBool(d, @"infinite_ammo", YES);
+    c->minTargets = cfgInt(d, @"min_targets", DEF_MIN_TARGETS);   /* ★ v0.2.1 */
+    if (c->minTargets < 1) c->minTargets = 1;
     if (c->tickMs < 30) c->tickMs = 30;          /* 太快会压死主线程 */
     if (c->killPerTick < 1) c->killPerTick = 1;
     if (c->spawnLimit < 1) c->spawnLimit = 1;
@@ -187,6 +194,7 @@ static void WriteDefaultConfig(void) {
         @"  \"spawn_limit\": 20,\n"
         @"  \"spawn_total\": 0,\n"
         @"  \"time_limit\": 20,\n"
+        @"  \"min_targets\": 1,\n"
         @"  \"infinite_ammo\": true\n"
         @"}\n";
     [body writeToFile:ConfigPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -485,7 +493,10 @@ static void killTick(void) {
         }
         capReached = NO;
         collectTargets();
-        if (targetsN <= 3) return;          /* 大厅/菜单不许开杀 */
+        /* ★ v0.2.1：门槛可配置（默认 1）。防大厅由上面 hallMode 闸负责，
+         *   再卡"≤3 不杀"只会让残局停手（设 min_targets=4 可恢复旧行为）。 */
+        if (targetsN < cfg.minTargets) return;
+        if (targetsN == 0) return;
         if (!gDmg) gDmg = (double *)malloc(8);   /* ⚠️ .xm 按 ObjC++ 编译，void* 不会隐式转 double* */
         *gDmg = 1e6;
         int n = 0;
