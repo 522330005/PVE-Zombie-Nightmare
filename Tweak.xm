@@ -34,7 +34,7 @@
 #include <stdlib.h>      /* malloc / calloc */
 #include <sys/stat.h>    /* 配置热重载：stat() 取文件修改时间 */
 
-#define TWEAK_VERSION "0.2.1"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
+#define TWEAK_VERSION "0.2.2"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
 #define BUNDLE_SNIPER3D "com.fungames.sniper3d"
 
 /* ★ 默认参数（会被配置覆盖）—— 必须定义在文件头，ConfigDefaults() 要用 */
@@ -205,7 +205,13 @@ static void LoadConfig(void) {
     ConfigDefaults(&cfg);
     NSData *data = [NSData dataWithContentsOfFile:ConfigPath()];
     if (!data) { WriteDefaultConfig(); return; }
-    NSDictionary *d = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSError *jerr = nil;
+    NSDictionary *d = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jerr];
+    if (!d) {   /* v0.2.2：配置损坏不再静默吞——告警并回默认 */
+        TLog(@"[PVE] ⚠️ 配置损坏/非法 JSON：%@ —— 已回退默认配置", jerr.localizedDescription ?: @"(未知错误)");
+        ConfigDefaults(&cfg);
+        return;
+    }
     if ([d isKindOfClass:[NSDictionary class]]) ConfigFromDict(&cfg, d);
 }
 
@@ -358,6 +364,7 @@ static BOOL setupAll(void) {
 static void *gExc = NULL;
 static void *gArgsBuf[8];
 #define FNP(p) ((void *)(uintptr_t)(p))
+static int gInvExcN = 0;   /* v0.2.2 inv 异常计数（节流日志，先声明后用） */
 static void *inv(void *m, void *obj, void **args, int n) {
     if (!m) return NULL;
     if (!gExc) gExc = calloc(1, 8);
@@ -369,7 +376,13 @@ static void *inv(void *m, void *obj, void **args, int n) {
     }
     *(void **)gExc = NULL;
     void *r = il2cpp_runtime_invoke(m, obj, p, gExc);
-    return *(void **)gExc ? NULL : r;
+    if (*(void **)gExc) {   /* v0.2.2：il2cpp 异常不再静默吞（节流防 15 杀/秒刷屏） */
+        gInvExcN++;
+        if (gInvExcN <= 3 || gInvExcN % 500 == 0)
+            TLog(@"[PVE] ⚠️ il2cpp 调用抛异常 #%d（方法=%p 对象=%p）—— 该功能可能失效", gInvExcN, m, obj);
+        return NULL;
+    }
+    return r;
 }
 static NSString *csStr(void *s) {
     if (!s) return @"";
@@ -780,7 +793,12 @@ static void tick1s(NSTimer *t) {
  *    初始化窗口 → 拿到半成品 domain → 内部 NULL+0x135 SIGSEGV。
  *    这里 %ctor 只排主队列，探测用 dispatch_after 单步重试。 */
 static void setupStep(void);
+static int gSetupN = 0;          /* v0.2.2 启动重试计数（上限 300≈3 分钟） */
 static void retrySetup(void) {
+    if (++gSetupN > 300) {          /* 极端情况（il2cpp 一直没就绪）停止无限重试 */
+        TLog(@"[PVE] ⛔ 启动重试超限（%d 次≈3 分钟），放弃——重启游戏或重装 deb", gSetupN);
+        return;
+    }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(600 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{ setupStep(); });
 }
