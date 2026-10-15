@@ -34,7 +34,7 @@
 #include <stdlib.h>      /* malloc / calloc */
 #include <sys/stat.h>    /* 配置热重载：stat() 取文件修改时间 */
 
-#define TWEAK_VERSION "0.2.2"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
+#define TWEAK_VERSION "0.2.3"  /* 2026-10-03：★模式门禁——三份 deb 并存，只在【僵尸噩梦】关卡启用（无限子弹/杀怪/连击/刷怪/压时长）；离开该模式全部待机 */
 #define BUNDLE_SNIPER3D "com.fungames.sniper3d"
 
 /* ★ 默认参数（会被配置覆盖）—— 必须定义在文件头，ConfigDefaults() 要用 */
@@ -852,4 +852,16 @@ static void setupStep(void) {
             } @catch (NSException *e) {}
         }
     });
+}
+
+/* ================= 卸载析构（豆包审计对齐加固 v 本轮） =================
+ * 仅防护热卸载（iCleaner 等进程不杀强行卸 dylib）场景下的 NSTimer 悬空野指针。
+ * 不做 MSHookRemoveHook / 不恢复字节补丁：热卸载时本 dylib 代码段已卸，
+ * 调 MSHook 相关函数反而直接崩；进程正常退出由 OS 回收，也无需处理。 */
+__attribute__((destructor))
+static void tweakDtor(void) {
+    if (gTimer) {
+        [gTimer invalidate];
+        gTimer = nil;
+    }
 }
